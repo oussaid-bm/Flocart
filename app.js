@@ -6,6 +6,7 @@ import { config, PRODUCTS, TECHNIQUES, PLACEMENTS, STATUSES } from './lib/config
 import { query } from './lib/db.js';
 import { sendMail } from './lib/mail.js';
 import { issueKey, redeemKey, setSession, clearSession, requireAdmin, isAdmin } from './lib/auth.js';
+import { getWilaya, isValidPlace } from './lib/algeria.js';
 import * as views from './lib/views.js';
 
 const app = express();
@@ -67,13 +68,16 @@ app.post('/devis', (req, res, next) => {
 
       const placements = [].concat(b.placements || []).filter((p) => PLACEMENTS.includes(p)).join(', ');
       const technique = TECHNIQUES.includes(b.technique) ? b.technique : '';
-      const deadline = /^\d{4}-\d{2}-\d{2}$/.test(b.deadline || '') ? b.deadline : '';
+      const wilaya = getWilaya(b.wilaya);
+      if (!wilaya) return fail('Veuillez choisir votre wilaya.');
+      if (!isValidPlace(b.wilaya, b.commune)) return fail('Veuillez choisir une commune de la wilaya sélectionnée.');
 
       const [{ id }] = await query(
-        `INSERT INTO quotes (product, quantity, garment_color, sizes, technique, placements, flock_colors, details, deadline, logo_name, logo_mime, name, phone, email, ip_hash)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+        `INSERT INTO quotes (product, quantity, garment_color, sizes, technique, placements, flock_colors, details, wilaya, commune, address, logo_name, logo_mime, name, phone, email, ip_hash)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`,
         [b.product, quantity, clean(b.garment_color, 60), clean(b.sizes, 200), technique, placements,
-          clean(b.flock_colors, 200), clean(b.details, 2000), deadline,
+          clean(b.flock_colors, 200), clean(b.details, 2000),
+          `${wilaya.code} - ${wilaya.name}`, b.commune, clean(b.address, 300),
           req.file ? clean(req.file.originalname, 120) : null, req.file ? 'image/png' : null,
           clean(b.name, 100), phone, email, ipHash],
       );
@@ -98,6 +102,7 @@ async function notifyOwner(id) {
     '',
     `Produit : ${product} (x${q.quantity})`,
     `Client : ${q.name} - ${q.phone}${q.email ? ' - ' + q.email : ''}`,
+    `Livraison : ${q.commune}, ${q.wilaya}`,
     q.placements ? `Emplacements : ${q.placements}` : false,
     q.technique ? `Technique : ${q.technique}` : false,
     q.logo_mime ? 'Logo : joint (visible dans l\'espace admin)' : 'Logo : non fourni',
