@@ -20,22 +20,16 @@ app.use((req, res, next) => {
 });
 
 /* ---------- Upload du logo (en mémoire, stocké en base) ---------- */
-const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.pdf': 'application/pdf' };
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const NOT_PNG = 'Le logo doit être au format PNG (fichier .png).';
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: config.maxLogoBytes, files: 1, fields: 20 },
-  fileFilter: (req, file, cb) => cb(null, extname(file.originalname).toLowerCase() in MIME),
+  fileFilter: (req, file, cb) => cb(extname(file.originalname).toLowerCase() === '.png' ? null : new Error('NOT_PNG'), true),
 });
 
-/** Vérifie que le contenu correspond à l'extension (et pas seulement le nom). */
-function looksValid(buf, ext) {
-  const head = buf.subarray(0, 512);
-  if (ext === '.png') return head.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-  if (ext === '.jpg' || ext === '.jpeg') return head[0] === 0xff && head[1] === 0xd8;
-  if (ext === '.pdf') return head.subarray(0, 4).toString() === '%PDF';
-  if (ext === '.svg') return /<svg|<\?xml/.test(head.toString('utf8'));
-  return false;
-}
+/** Vérifie la signature PNG : le contenu doit être un vrai PNG, pas seulement un nom en .png. */
+const isPng = (buf) => buf.length > 8 && buf.subarray(0, 8).equals(PNG_SIGNATURE);
 
 /* ---------- Pages clients ---------- */
 app.get('/', (req, res) => res.send(views.homePage()));
@@ -51,7 +45,10 @@ app.post('/devis', (req, res, next) => {
     try {
       const b = req.body || {};
       const fail = (error) => res.status(400).send(views.quotePage({ values: { ...b, placements: [].concat(b.placements || []) }, error }));
-      if (uploadErr) return fail(uploadErr.code === 'LIMIT_FILE_SIZE' ? 'Le logo dépasse 4 Mo.' : 'Envoi du fichier impossible.');
+      if (uploadErr) {
+        if (uploadErr.message === 'NOT_PNG') return fail(NOT_PNG);
+        return fail(uploadErr.code === 'LIMIT_FILE_SIZE' ? 'Le logo dépasse 4 Mo.' : 'Envoi du fichier impossible.');
+      }
       if (b.website) return res.send(views.thanksPage('0')); // honeypot : on fait semblant que c'est passé
 
       const ipHash = createHash('sha256').update(String(req.ip)).digest('hex');
@@ -66,8 +63,7 @@ app.post('/devis', (req, res, next) => {
       if (!clean(b.name, 100)) return fail('Veuillez indiquer votre nom.');
       if (!/^[+\d][\d\s().-]{6,}$/.test(phone)) return fail('Numéro de téléphone invalide.');
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('Adresse e-mail invalide.');
-      const ext = req.file ? extname(req.file.originalname).toLowerCase() : '';
-      if (req.file && !looksValid(req.file.buffer, ext)) return fail('Le fichier du logo n\'est pas une image/PDF valide.');
+      if (req.file && !isPng(req.file.buffer)) return fail(NOT_PNG);
 
       const placements = [].concat(b.placements || []).filter((p) => PLACEMENTS.includes(p)).join(', ');
       const technique = TECHNIQUES.includes(b.technique) ? b.technique : '';
@@ -78,7 +74,7 @@ app.post('/devis', (req, res, next) => {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
         [b.product, quantity, clean(b.garment_color, 60), clean(b.sizes, 200), technique, placements,
           clean(b.flock_colors, 200), clean(b.details, 2000), deadline,
-          req.file ? clean(req.file.originalname, 120) : null, req.file ? MIME[ext] : null,
+          req.file ? clean(req.file.originalname, 120) : null, req.file ? 'image/png' : null,
           clean(b.name, 100), phone, email, ipHash],
       );
       if (req.file) await query('INSERT INTO quote_logos (quote_id, data_b64) VALUES ($1, $2)', [id, req.file.buffer.toString('base64')]);

@@ -31,6 +31,6 @@ Sans `DATABASE_URL`, une base de test (PGlite) est créée dans `./data`. Sans `
 5. Redéployez après avoir ajouté les variables. Testez `/admin` : la clé doit arriver par e-mail.
 
 ## Limites à connaître
-- Logo : 4 Mo max (limite des requêtes Vercel), stocké en base (base64).
+- Logo : PNG uniquement (signature vérifiée côté serveur), 4 Mo max (limite des requêtes Vercel), stocké en base (base64).
 - Anti-spam : 5 demandes par heure et par IP + champ piège.
 - Si les e-mails ne partent pas, la demande est quand même enregistrée et visible dans l'admin (mais `/admin` exige l'e-mail pour la clé).
